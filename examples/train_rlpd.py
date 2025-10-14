@@ -217,7 +217,33 @@ def actor(agent, agent_pick, data_store, intvn_data_store, env, sampling_rng):
             # ==== 判定任务1完成（你可替换为自己的条件）====
             if done:
                 print_green("pick task done--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-                mode = "S2_TRAIN"
+                mode = "S2_TRAIN_TEST"
+                # 可在此清零统计（可选）
+                intervention_count = 0
+                intervention_steps = 0
+                already_intervened = False
+            else:
+                # 任务1未完成就继续 S1 推理
+                continue
+        
+        if mode == "S2_TRAIN_TEST":
+            actions = agent.sample_actions(
+                observations=jax.device_put(obs),
+                argmax=True,    
+                seed=key
+            )
+            actions = np.asarray(jax.device_get(actions)).copy()
+            if actions.shape[-1] >= 7:
+                actions[..., 6] = (actions[..., 6] + 1.0) / 2.0
+                actions[..., 6] = np.clip(actions[..., 6], 0.0, 1.0)
+
+            next_obs, reward, done, truncated, info = env.step(actions)
+            obs = next_obs
+
+            # ==== 判定任务1完成（你可替换为自己的条件）====
+            if done:
+                print_green("pick task done--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+                mode = "S2_TRAIN_TEST"
                 # 可在此清零统计（可选）
                 intervention_count = 0
                 intervention_steps = 0
@@ -226,110 +252,93 @@ def actor(agent, agent_pick, data_store, intvn_data_store, env, sampling_rng):
                 # 任务1未完成就继续 S1 推理
                 continue
 
-        
-        timer.tick("total")
-        with timer.context("sample_actions"):
-            print_green(f"obs[state] =  {obs['state']}")
-            # if step < config.random_steps:
-            #     print("random actions")
-            #     actions = env.action_space.sample()
-            # else:
-            sampling_rng, key = jax.random.split(sampling_rng)
-            # print("obs shape = ", obs["state"].shape)
-            actions_sample = agent.sample_actions(
-                observations=obs,
-                seed=key,
-            )
-            actions = np.asarray(jax.device_get(actions_sample)).copy()
-            actions[..., 6] = (actions[..., 6] + 1.0) / 2.0
-            actions[..., 6] = np.clip(actions[..., 6], 0.0, 1.0)
-        # Step environment
-        with timer.context("step_env"):
-            # TODO: judge if the network need to be intervened
-            print("actions before intervene= ", actions)
-            # if actions[6] < 0.8:
-            #     actions[6] = 1.0
-            next_obs, reward, done, truncated, info = env.step(actions)
-            print("reward = ", reward)
+        else:
+            timer.tick("total")
+            with timer.context("sample_actions"):
+                print_green(f"obs[state] =  {obs['state']}")
+                # if step < config.random_steps:
+                #     print("random actions")
+                #     actions = env.action_space.sample()
+                # else:
+                sampling_rng, key = jax.random.split(sampling_rng)
+                # print("obs shape = ", obs["state"].shape)
+                actions_sample = agent.sample_actions(
+                    observations=obs,
+                    seed=key,
+                )
+                actions = np.asarray(jax.device_get(actions_sample)).copy()
+                actions[..., 6] = (actions[..., 6] + 1.0) / 2.0
+                actions[..., 6] = np.clip(actions[..., 6], 0.0, 1.0)
+            # Step environment
+            with timer.context("step_env"):
+                # TODO: judge if the network need to be intervened
+                print("actions before intervene= ", actions)
+                # if actions[6] < 0.8:
+                #     actions[6] = 1.0
+                next_obs, reward, done, truncated, info = env.step(actions)
+                print("reward = ", reward)
 
-            # print_red(f"next_obs[state] =  {next_obs['state']}")
+                # print_red(f"next_obs[state] =  {next_obs['state']}")
 
-            # override the action with the intervention action
-            if "intervene_action" in info:
-                actions = info.pop("intervene_action")
-                print("intervene_action = ", actions)
-                intervention_steps += 1
-                if not already_intervened:
-                    intervention_count += 1
-                already_intervened = True
-            else:
-                already_intervened = False
-            
-            # if "is_pick" in info:
-            #     is_pick = info["is_pick"]
-            # else:
-            #     is_pick = True
-            
-            running_return += reward
-            transition = dict(
-                observations=obs,
-                next_observations=next_obs,
-                actions=actions,
-                rewards=reward,
-                masks=1.0 - done,
-                dones=done,
-            )
-            # if 'grasp_penalty' in info:
-            #     transition['grasp_penalty']= info['grasp_penalty']
-            data_store.insert(transition)
-            transitions.append(copy.deepcopy(transition))
-            if already_intervened:
-                intvn_data_store.insert(transition)
-                demo_transitions.append(copy.deepcopy(transition))
+                # override the action with the intervention action
+                if "intervene_action" in info:
+                    actions = info.pop("intervene_action")
+                    print("intervene_action = ", actions)
+                    intervention_steps += 1
+                    if not already_intervened:
+                        intervention_count += 1
+                    already_intervened = True
+                else:
+                    already_intervened = False
+                
+                # if "is_pick" in info:
+                #     is_pick = info["is_pick"]
+                # else:
+                #     is_pick = True
+                
+                running_return += reward
+                transition = dict(
+                    observations=obs,
+                    next_observations=next_obs,
+                    actions=actions,
+                    rewards=reward,
+                    masks=1.0 - done,
+                    dones=done,
+                )
+                # if 'grasp_penalty' in info:
+                #     transition['grasp_penalty']= info['grasp_penalty']
+                data_store.insert(transition)
+                transitions.append(copy.deepcopy(transition))
+                if already_intervened:
+                    intvn_data_store.insert(transition)
+                    demo_transitions.append(copy.deepcopy(transition))
 
-            obs = next_obs
-            # if done and is_pick:
-            #     print_green("pick task done--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+                obs = next_obs
+                # if done and is_pick:
+                #     print_green("pick task done--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
 
-            # if done and not is_pick:
-            if done:
-                print_green(f" task done = {done}")
-                info["episode"]["intervention_count"] = intervention_count
-                info["episode"]["intervention_steps"] = intervention_steps
-                stats = {"environment": info}  # send stats to the learner to log
+                # if done and not is_pick:
+                if done:
+                    print_green(f" task done = {done}")
+                    info["episode"]["intervention_count"] = intervention_count
+                    info["episode"]["intervention_steps"] = intervention_steps
+                    stats = {"environment": info}  # send stats to the learner to log
+                    client.request("send-stats", stats)
+                    pbar.set_description(f"last return: {running_return}")
+                    running_return = 0.0
+                    intervention_count = 0
+                    intervention_steps = 0
+                    already_intervened = False
+                    client.update()
+                    mode = "S1_INFER"
+                    input("reset env")
+                    obs, _ = env.reset()
+
+            timer.tock("total")
+
+            if step % config.log_period == 0:
+                stats = {"timer": timer.get_average_times()}
                 client.request("send-stats", stats)
-                pbar.set_description(f"last return: {running_return}")
-                running_return = 0.0
-                intervention_count = 0
-                intervention_steps = 0
-                already_intervened = False
-                client.update()
-                mode = "S1_INFER"
-                input("reset env")
-                obs, _ = env.reset()
-
-        # if step > 0 and config.buffer_period > 0 and step % config.buffer_period == 0:
-        #     # dump to pickle file
-        #     buffer_path = os.path.join(FLAGS.checkpoint_path, "buffer")
-        #     demo_buffer_path = os.path.join(FLAGS.checkpoint_path, "demo_buffer")
-        #     if not os.path.exists(buffer_path):
-        #         os.makedirs(buffer_path)
-        #     if not os.path.exists(demo_buffer_path):
-        #         os.makedirs(demo_buffer_path)
-        #     with open(os.path.join(buffer_path, f"transitions_{step}.pkl"), "wb") as f:
-        #         pkl.dump(transitions, f)
-        #         transitions = []
-        #     with open(
-        #         os.path.join(demo_buffer_path, f"transitions_{step}.pkl"), "wb"
-        #     ) as f:
-        #         pkl.dump(demo_transitions, f)
-        #         demo_transitions = []
-
-        timer.tock("total")
-
-        if step % config.log_period == 0:
-            stats = {"timer": timer.get_average_times()}
-            client.request("send-stats", stats)
 
 
 ##############################################################################

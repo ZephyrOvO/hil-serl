@@ -190,7 +190,6 @@ class TrainConfig(DefaultTrainingConfig):
                 state = obs["state"]
                 ee_pos = state[0, :3] if state.ndim > 1 else state[:3]
                 gripper_pose = state[0, -1] if state.ndim > 1 else state[-1]
-                print("gripper_pose = ", gripper_pose)
                 # if ee_pos[1] > -0.13 and ee_pos[2] < 0.14:
                 #     reward -= 0.01
                 # if ee_pos[2] < 0.02:

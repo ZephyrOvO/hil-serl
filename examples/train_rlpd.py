@@ -51,7 +51,7 @@ flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_string("checkpoint_path", None, "Path to save checkpoints.")
 flags.DEFINE_string("checkpoint_path_pick", None, "Path to save pick checkpoints.")
-flags.DEFINE_integer("eval_checkpoint_step", 0, "Step to evaluate the checkpoint.")
+flags.DEFINE_integer("eval_checkpoint_step", 10, "Step to evaluate the checkpoint.")
 flags.DEFINE_integer("eval_n_trajs", 10, "Number of trajectories to evaluate.")
 flags.DEFINE_boolean("save_video", False, "Save video.")
 flags.DEFINE_boolean("test", True, "read exist data or not.")
@@ -84,56 +84,115 @@ def actor(agent, agent_pick, data_store, intvn_data_store, env, sampling_rng):
         print("in eval mode")
         success_counter = 0
         time_list = []
-        print_green(f"Loaded previous checkpoint at step {FLAGS.eval_checkpoint_step}.")
-        ckpt = checkpoints.restore_checkpoint(
-            os.path.abspath(FLAGS.checkpoint_path),
-            agent.state,
-            step=FLAGS.eval_checkpoint_step,
-        )
-        agent = agent.replace(state=ckpt)
+        # print_green(f"Loaded previous checkpoint at step {FLAGS.eval_checkpoint_step}.")
+        # ckpt = checkpoints.restore_checkpoint(
+        #     os.path.abspath(FLAGS.checkpoint_path),
+        #     agent.state,
+        #     step=FLAGS.eval_checkpoint_step,
+        # )
+        # agent = agent.replace(state=ckpt)
         
         obs, _ = env.reset()
+        mode = "S1_INFER"
         for episode in range(FLAGS.eval_n_trajs):
-            done = False
-            start_time = time.time()
+            # done = False
+            # start_time = time.time()
 
-            while not done:
+            # while not done:
 
-                sampling_rng, key = jax.random.split(sampling_rng)
+            #     sampling_rng, key = jax.random.split(sampling_rng)
 
-                # print_green(f"obs[state] =  {obs['state']}")
-                actions = agent.sample_actions(
-                    observations=jax.device_put(obs),
-                    argmax=False,
-                    seed=key
-                )
-                actions = np.asarray(jax.device_get(actions))
+            #     # print_green(f"obs[state] =  {obs['state']}")
+            #     actions = agent.sample_actions(
+            #         observations=jax.device_put(obs),
+            #         argmax=False,
+            #         seed=key
+            #     )
+            #     actions = np.asarray(jax.device_get(actions))
 
-                next_obs, reward, done, truncated, info = env.step(actions)
-                obs = next_obs
-                # if "is_pick" in info:
-                #     is_pick = info["is_pick"]
-                # else:
-                #     is_pick = True
+            #     next_obs, reward, done, truncated, info = env.step(actions)
+            #     obs = next_obs
+            #     # if "is_pick" in info:
+            #     #     is_pick = info["is_pick"]
+            #     # else:
+            #     #     is_pick = True
                 
-                # if done and is_pick:
-                #     print_green("pick task done--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+            #     # if done and is_pick:
+            #     #     print_green("pick task done--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
 
-                if done:
-                # if done and not is_pick:
-                    if reward:
-                        dt = time.time() - start_time
-                        time_list.append(dt)
-                        print(dt)
+            #     if done:
+            #     # if done and not is_pick:
+            #         if reward:
+            #             dt = time.time() - start_time
+            #             time_list.append(dt)
+            #             print(dt)
 
-                    success_counter += reward
-                    print(reward)
-                    print(f"{success_counter}/{episode + 1}")
-                    input("reset env")
-                    obs, _ = env.reset()
+            #         success_counter += reward
+            #         print(reward)
+            #         print(f"{success_counter}/{episode + 1}")
+            #         input("reset env")
+            #         obs, _ = env.reset()
+            place_done = False
+            while not place_done:
+                sampling_rng, key = jax.random.split(sampling_rng)
+                if mode == "S1_INFER":
+                    # -------- 阶段1：只用 agent_s1 做推理，不写入训练 buffer --------
+                    actions = agent_pick.sample_actions(
+                        observations=jax.device_put(obs),
+                        argmax=True,    
+                        seed=key
+                    )
+                    actions = np.asarray(jax.device_get(actions)).copy()
+                    if actions.shape[-1] >= 7:
+                        actions[..., 6] = (actions[..., 6] + 1.0) / 2.0
+                        actions[..., 6] = np.clip(actions[..., 6], 0.0, 1.0)
+
+                    next_obs, reward, done, truncated, info = env.step(actions)
+                    obs = next_obs
+
+                    # ==== 判定任务1完成（你可替换为自己的条件）====
+                    if done:
+                        print_green("pick task done--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+                        mode = "S2_TRAIN_TEST"
+                        # 可在此清零统计（可选）
+                        intervention_count = 0
+                        intervention_steps = 0
+                        already_intervened = False
+                    else:
+                        # 任务1未完成就继续 S1 推理
+                        continue
+                
+                if mode == "S2_TRAIN_TEST":
+                    actions = agent.sample_actions(
+                        observations=jax.device_put(obs),
+                        argmax=True,    
+                        seed=key
+                    )
+                    actions = np.asarray(jax.device_get(actions)).copy()
+                    if actions.shape[-1] >= 7:
+                        actions[..., 6] = (actions[..., 6] + 1.0) / 2.0
+                        actions[..., 6] = np.clip(actions[..., 6], 0.0, 1.0)
+
+                    next_obs, reward, done, truncated, info = env.step(actions)
+                    obs = next_obs
+
+                    # ==== 判定任务1完成（你可替换为自己的条件）====
+                    if done:
+                        mode = "S1_INFER"
+                        place_done = True
+                        # 可在此清零统计（可选）
+                        success_counter += 1
+                        intervention_count = 0
+                        intervention_steps = 0
+                        already_intervened = False
+                        input("reset env")
+                        obs, _ = env.reset()
+                    else:
+                        # 任务1未完成就继续 S1 推理
+                        continue
 
         print(f"success rate: {success_counter / FLAGS.eval_n_trajs}")
-        print(f"average time: {np.mean(time_list)}")
+        # print(f"average time: {np.mean(time_list)}")
         return  # after done eval, return and exit
     
     start_step = (
@@ -242,12 +301,13 @@ def actor(agent, agent_pick, data_store, intvn_data_store, env, sampling_rng):
 
             # ==== 判定任务1完成（你可替换为自己的条件）====
             if done:
-                print_green("pick task done--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-                mode = "S2_TRAIN_TEST"
+                mode = "S1_INFER"
                 # 可在此清零统计（可选）
                 intervention_count = 0
                 intervention_steps = 0
                 already_intervened = False
+                input("reset env")
+                obs, _ = env.reset()
             else:
                 # 任务1未完成就继续 S1 推理
                 continue

@@ -506,7 +506,7 @@ class DensoEnv(gym.Env):
         elif self.exp_name == "tube_insertion":
             cond_z = (self.nextpos[2] <= 0.13)
             if cond_z:
-                xyz_delta = np.clip(action[:3], -0.2, 0.2)
+                xyz_delta = np.clip(action[:3], -0.1, 0.1)
 
         self.nextpos[:3] = self.nextpos[:3] + xyz_delta * self.action_scale[0]
         if self.nextpos[2] < 0.05:

@@ -108,7 +108,7 @@ class TrainConfig(DefaultTrainingConfig):
         if enable_tactile:
             self.image_keys = ["front_camera", "wrist_camera", "tactile_data"]
             self.classifier_keys = ["front_camera", "wrist_camera","tactile_data"]
-            self.classifier_key_weights = {"front_camera": 1.0, "wrist_camera": 2.0, "tactile_data": 2.0}
+            self.classifier_key_weights = {"front_camera": 1.0, "wrist_camera": 1.0, "tactile_data": 1.0}
             # self.image_keys = ["front_camera", "wrist_camera", "tactile_data"]
             # self.classifier_keys = ["front_camera","tactile_data"]
             # self.classifier_key_weights = {"front_camera": 1.0, "tactile_data": 1.0}

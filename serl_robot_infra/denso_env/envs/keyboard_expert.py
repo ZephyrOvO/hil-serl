@@ -13,20 +13,11 @@ class KeyboardExpert:
         - Z/X: Gripper open/close (if 7-DoF control is used)
     """
 
-    def __init__(self, exp_name: str = "tennins_ball_pick"):
+    def __init__(self):
         # 创建共享字典用于跨进程通信
         self.manager = multiprocessing.Manager()
         self.latest_data = self.manager.dict()
-        self.latest_data["action"] = [0.0] * 7
-        if exp_name == "tennis_ball_pick":
-            self.LARGE_STEP = 1
-            self.SMALL_STEP = 0.2
-        elif exp_name == "twist_bottle_cap":
-            self.LARGE_STEP = 0.5
-            self.SMALL_STEP = 0.2
-        elif exp_name == "tube_insertion":
-            self.LARGE_STEP = 1
-            self.SMALL_STEP = 0.5
+        self.latest_data["action"] = [0.0] * 5
 
         # self.process = multiprocessing.Process(target=self._read_keyboard)
         self._stop_event = multiprocessing.Event()
@@ -57,64 +48,55 @@ class KeyboardExpert:
         listener.start()
 
         while not stop_event.is_set():
-            action = [0.0] * 7
+            action = [0.0] * 5
 
             # 控制 xyz 方向移动
             if 'w' in current_keys:
                 # print("z+")
-                action[2] += self.LARGE_STEP
+                action[2] += 1
             if 's' in current_keys:
                 # print("z-")
-                action[2] -= self.LARGE_STEP
+                action[2] -= 1
             if 'a' in current_keys:
                 # print("x-")
-                action[0] -= self.LARGE_STEP
+                action[0] -= 1
             if 'd' in current_keys:
                 # print("x+")
-                action[0] += self.LARGE_STEP
-            if 'q' in current_keys:
-                # print("y+")
-                action[1] += self.LARGE_STEP
+                action[0] += 1
             if 'e' in current_keys:
+                # print("y+")
+                action[1] += 1
+            if 'q' in current_keys:
                 # print("y-")
-                action[1] -= self.LARGE_STEP
+                action[1] -= 1
 
             if 't' in current_keys:
                 # print("z+")
-                action[2] += self.SMALL_STEP
+                action[2] += 0.2
             if 'g' in current_keys:
                 # print("z-")
-                action[2] -= self.SMALL_STEP
+                action[2] -= 0.2
             if 'f' in current_keys:
                 # print("x-")
-                action[0] -= self.SMALL_STEP
+                action[0] -= 0.2
             if 'h' in current_keys:
                 # print("x+")
-                action[0] += self.SMALL_STEP
+                action[0] += 0.2
             if 'r' in current_keys:
                 # print("y+")
-                action[1] += self.SMALL_STEP
+                action[1] += 0.2
             if 'y' in current_keys:
                 # print("y-")
-                action[1] -= self.SMALL_STEP
+                action[1] -= 0.2
 
-            # rotate toward z-axis
-            # if 'k' in current_keys:
-            #     action[6] = 0.1
-            # if 'l' in current_keys:
-            #     action[6] = 0.5
-                
-            # if 'j' in current_keys:
-            #     action[6] = 1
-
-            # 可选：gripper 控制（i = close, o = open）
+            # 可选：gripper 控制（c = close, o = open）
             if 'i' in current_keys:
-                action[6] = 1
+                action[3] = 1.0
             if 'o' in current_keys:
-                action[6] = -1
+                action[4] = 1.0
 
             # 缩放动作大小
-            # action = [a * 1 for a in action]
+            action = [a * 1 for a in action]
 
             # 更新共享状态
             try:
@@ -127,7 +109,7 @@ class KeyboardExpert:
     def get_action(self) -> tuple[np.ndarray, list]:
         action = self.latest_data["action"]
         if np.linalg.norm(action) > 0.001:
-            self.latest_data["action"] = [0.0] * 7  # 只在非零动作时清空
+            self.latest_data["action"] = [0.0] * 5  # 只在非零动作时清空
         # self.latest_data["action"] = [0.0] * 6
         return np.array(action)
 

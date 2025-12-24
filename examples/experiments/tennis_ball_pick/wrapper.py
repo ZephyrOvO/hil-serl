@@ -63,14 +63,12 @@ class RAMEnv(DensoEnv):
         init_ori = np.array([-0.03244228, 0.99039508, 0.12396424, -0.05194187])
         init_arm_action = np.concatenate([init_pos, init_ori])
         self.ros_interface.publish_arm_action(init_arm_action)
-        self._close_open_pose_init(self.curr_leap_hand_pos)
 
         time.sleep(5)
 
         self.curr_path_length = 0
         # self.ros_interface.reset_cur_pose()
         self._update_cur_position(init_arm_action)
-        self.gripper_open_joint_np = self.curr_leap_hand_pos.copy()
         # print("self.cur_position = ", self.cur_position)
         # self.save_training_frame()
         obs = self._get_obs()

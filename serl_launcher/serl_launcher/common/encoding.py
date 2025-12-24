@@ -5,6 +5,8 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from einops import rearrange, repeat
+from collections.abc import Mapping
+from flax.core.frozen_dict import FrozenDict 
 
 
 class EncodingWrapper(nn.Module):
@@ -35,8 +37,25 @@ class EncodingWrapper(nn.Module):
     ) -> jnp.ndarray:
         # encode images with encoder
         encoded = []
+        # for image_key in self.image_keys:
+        #     image = observations[image_key]
+        
         for image_key in self.image_keys:
-            image = observations[image_key]
+            obs_map = observations
+            if isinstance(obs_map, Mapping) and (image_key in obs_map):
+                image = obs_map[image_key]
+            else:
+                images_dict = obs_map.get("images") if isinstance(obs_map, Mapping) else None
+                if isinstance(images_dict, Mapping) and (image_key in images_dict):
+                    image = images_dict[image_key]
+                else:
+                    avail_top = list(obs_map.keys()) if isinstance(obs_map, Mapping) else "N/A"
+                    avail_img = list(images_dict.keys()) if isinstance(images_dict, Mapping) else "N/A"
+                    raise KeyError(
+                        f"{image_key!r} not found. "
+                        f"Checked top-level keys={avail_top} and observations['images'] keys={avail_img}."
+                    )
+        
             if not is_encoded:
                 if self.enable_stacking:
                     # Combine stacking and channels into a single dimension
@@ -51,6 +70,7 @@ class EncodingWrapper(nn.Module):
 
             if self.image_weights is not None:
                 image = image * self.image_weights.get(image_key, 1.0)
+
             encoded.append(image)
 
         encoded = jnp.concatenate(encoded, axis=-1)
@@ -68,13 +88,13 @@ class EncodingWrapper(nn.Module):
                 if len(state.shape) == 3:
                     state = rearrange(state, "B T C -> B (T C)")
             
-            # if self.state_weights is not None:
-            #     weights = jnp.asarray(self.state_weights, dtype=state.dtype)
-            #     feature_dim = state.shape[-1]
-            #     base_weights = jnp.ones((feature_dim,), dtype=state.dtype)
-            #     limit = min(feature_dim, weights.shape[0])
-            #     base_weights = base_weights.at[:limit].set(weights[:limit])
-            #     state = state * base_weights
+            if self.state_weights is not None:
+                weights = jnp.asarray(self.state_weights, dtype=state.dtype)
+                feature_dim = state.shape[-1]
+                base_weights = jnp.ones((feature_dim,), dtype=state.dtype)
+                limit = min(feature_dim, weights.shape[0])
+                base_weights = base_weights.at[:limit].set(weights[:limit])
+                state = state * base_weights
             state = nn.Dense(
                 self.proprio_latent_dim, kernel_init=nn.initializers.xavier_uniform()
             )(state)

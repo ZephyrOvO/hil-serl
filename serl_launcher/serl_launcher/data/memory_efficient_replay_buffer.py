@@ -25,16 +25,39 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
         self._num_stack = None
         for pixel_key in self.pixel_keys:
             pixel_obs_space = observation_space.spaces[pixel_key]
-            if self._num_stack is None:
-                self._num_stack = pixel_obs_space.shape[0]
+            shape = pixel_obs_space.shape
+
+            # ---- 通用解析：把最后 3 维当 (H,W,C)，其余前置维折叠为 T_total ----
+            if len(shape) >= 3:
+                H, W, C = shape[-3], shape[-2], shape[-1]
+                if len(shape) == 3:
+                    T_total = 1
+                else:
+                    T_total = int(np.prod(shape[:-3]))
             else:
-                assert self._num_stack == pixel_obs_space.shape[0]
-            self._unstacked_dim_size = pixel_obs_space.shape[-1]
-            low = pixel_obs_space.low[0]
-            high = pixel_obs_space.high[0]
-            unstacked_pixel_obs_space = Box(
-                low=low, high=high, dtype=pixel_obs_space.dtype
-            )
+                raise ValueError(f"Unexpected pixel obs shape {shape} for key {pixel_key}")
+
+            # 取第一帧的 low/high，得到 (H,W,C) 形状
+            if len(shape) == 3:
+                low  = pixel_obs_space.low       # (H,W,C)
+                high = pixel_obs_space.high      # (H,W,C)
+            else:
+                # 用 (0,...,0) 索引到第一帧
+                idx0 = (0,) * (len(shape) - 3)
+                low  = pixel_obs_space.low[idx0]   # (H,W,C)
+                high = pixel_obs_space.high[idx0]  # (H,W,C)
+
+            if self._num_stack is None:
+                self._num_stack = T_total
+            else:
+                assert self._num_stack == T_total, (
+                    f"Inconsistent T across pixel keys: {self._num_stack} vs {T_total}"
+                )
+
+            self._unstacked_dim_size = C  # channels per frame
+
+            # 把 obs space 变成“去掉所有时间维”的 Box（即单帧）
+            unstacked_pixel_obs_space = Box(low=low, high=high, dtype=pixel_obs_space.dtype)
             observation_space.spaces[pixel_key] = unstacked_pixel_obs_space
 
         next_observation_space_dict = copy.deepcopy(observation_space.spaces)
@@ -54,6 +77,18 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
             include_grasp_penalty=include_grasp_penalty,
         )
 
+    def _to_T_HWC(self, arr: np.ndarray) -> np.ndarray:
+        """把 (H,W,C) 或 任意形状(...,H,W,C) 统一 reshape 成 (T_total, H, W, C)。"""
+        if arr.ndim == 3:
+            H, W, C = arr.shape
+            return arr.reshape(1, H, W, C)
+        elif arr.ndim >= 4:
+            H, W, C = arr.shape[-3], arr.shape[-2], arr.shape[-1]
+            T_total = int(np.prod(arr.shape[:-3]))
+            return arr.reshape(T_total, H, W, C)
+        else:
+            raise ValueError(f"Unexpected image ndim: {arr.ndim}")
+
     def insert(self, data_dict: DatasetDict):
         if self._insert_index == 0 and self._capacity == len(self) and not self._first:
             indxs = np.arange(len(self) - self._num_stack, len(self))
@@ -71,16 +106,22 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
         for pixel_key in self.pixel_keys:
             obs_pixels[pixel_key] = data_dict["observations"].pop(pixel_key)
             next_obs_pixels[pixel_key] = data_dict["next_observations"].pop(pixel_key)
+
         if self._first:
+            # 把第一步“预热”的 T-1 帧也插入（与原逻辑一致）
             for i in range(self._num_stack):
                 for pixel_key in self.pixel_keys:
-                    data_dict["observations"][pixel_key] = obs_pixels[pixel_key][i]
+                    arr = self._to_T_HWC(obs_pixels[pixel_key])  # (T,H,W,C)
+                    frame = arr[i if i < arr.shape[0] else -1]
+                    data_dict["observations"][pixel_key] = frame
 
                 self._is_correct_index[self._insert_index] = False
                 super().insert(data_dict)
 
         for pixel_key in self.pixel_keys:
-            data_dict["observations"][pixel_key] = next_obs_pixels[pixel_key][-1]
+            arr = self._to_T_HWC(next_obs_pixels[pixel_key])  # (T,H,W,C)
+            frame = arr[-1]  # 下一帧
+            data_dict["observations"][pixel_key] = frame
 
         self._first = data_dict["dones"]
 
@@ -148,19 +189,24 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
             )
 
         for pixel_key in self.pixel_keys:
-            obs_pixels = self.dataset_dict["observations"][pixel_key]
+            # 存储时我们已把像素展成了 (N, H, W, C) 单帧序列
+            obs_pixels = self.dataset_dict["observations"][pixel_key]  # (N,H,W,C)
             obs_pixels = np.lib.stride_tricks.sliding_window_view(
                 obs_pixels, self._num_stack + 1, axis=0
             )
-            obs_pixels = obs_pixels[indx - self._num_stack]
-            # transpose from (B, H, W, C, T) to (B, T, H, W, C) to follow jaxrl_m convention
+            obs_pixels = obs_pixels[indx - self._num_stack]  # (B, T, H, W, C)
+
+            if obs_pixels.ndim != 5:
+                raise ValueError(f"Expected obs_pixels to be 5D (B,T,H,W,C), got shape {obs_pixels.shape}")
+
+            # 变成 (B, C, T, H, W)
             obs_pixels = obs_pixels.transpose((0, 4, 1, 2, 3))
 
             if pack_obs_and_next_obs:
                 batch["observations"][pixel_key] = obs_pixels
             else:
-                batch["observations"][pixel_key] = obs_pixels[:, :-1, ...]
+                batch["observations"][pixel_key] = obs_pixels[:, :, :-1, ...]
                 if "next_observations" in keys:
-                    batch["next_observations"][pixel_key] = obs_pixels[:, 1:, ...]
+                    batch["next_observations"][pixel_key] = obs_pixels[:, :, 1:, ...]
 
         return frozen_dict.freeze(batch)

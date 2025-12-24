@@ -1,6 +1,5 @@
 import gymnasium as gym
 from gymnasium.spaces import flatten_space, flatten
-from collections import OrderedDict
 
 
 class SERLObsWrapper(gym.ObservationWrapper):
@@ -15,13 +14,10 @@ class SERLObsWrapper(gym.ObservationWrapper):
         if self.proprio_keys is None:
             self.proprio_keys = list(self.env.observation_space["state"].keys())
 
-        # self.proprio_space = gym.spaces.Dict(
-        #     {key: self.env.observation_space["state"][key] for key in self.proprio_keys}
-        # )
         self.proprio_space = gym.spaces.Dict(
-            OrderedDict([(key, self.env.observation_space["state"][key]) for key in self.proprio_keys])
+            {key: self.env.observation_space["state"][key] for key in self.proprio_keys}
         )
-        
+
         self.observation_space = gym.spaces.Dict(
             {
                 "state": flatten_space(self.proprio_space),
@@ -30,13 +26,13 @@ class SERLObsWrapper(gym.ObservationWrapper):
         )
 
     def observation(self, obs):
-        obs = {
-            "state": flatten(
-                self.proprio_space,
-                {key: obs["state"][key] for key in self.proprio_keys},
-            ),
-            **(obs["images"]),
-        }
+        # obs = {
+        #     "state": flatten(
+        #         self.proprio_space,
+        #         {key: obs["state"][key] for key in self.proprio_keys},
+        #     ),
+        #     **(obs["images"]),
+        # }
         return obs
 
     def reset(self, **kwargs):

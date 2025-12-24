@@ -142,12 +142,26 @@ def load_resnet10_params(agent, image_keys=("image",), public=True):
         with open(file_path, "rb") as f:
             encoder_params = pkl.load(f)
 
-    param_count = sum(x.size for x in jax.tree_leaves(encoder_params))
+    param_count = sum(x.size for x in jax.tree.leaves(encoder_params))
     print(
         f"Loaded {param_count/1e6}M parameters from ResNet-10 pretrained on ImageNet-1K"
     )
 
     new_params = agent.state.params
+    
+    # print("\n[DEBUG] top-level param keys:", new_params.keys())
+
+    # if "modules_actor" in new_params:
+    #     print("[DEBUG] modules_actor keys:", new_params["modules_actor"].keys())
+
+    #     if "encoder" in new_params["modules_actor"]:
+    #         print(
+    #             "[DEBUG] modules_actor/encoder keys:",
+    #             new_params["modules_actor"]["encoder"].keys(),
+    #         )
+    # else:
+    #     print("[DEBUG] no 'modules_actor' in params! keys =", new_params.keys())
+        
 
     for image_key in image_keys:
         new_encoder_params = new_params["modules_actor"]["encoder"][

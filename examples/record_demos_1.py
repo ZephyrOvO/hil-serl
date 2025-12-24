@@ -1,3 +1,4 @@
+
 import os
 import sys
 from tqdm import tqdm
@@ -20,9 +21,6 @@ from scipy.spatial.transform import Rotation as R
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../serl_robot_infra'))
 sys.path.insert(0, project_root)
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../serl_launcher'))
-sys.path.insert(0, project_root)
-
 from serl_launcher.networks.reward_classifier import load_classifier_func
 
 from examples.utils import read_utils
@@ -30,14 +28,14 @@ from examples.utils import read_utils
 from experiments.mappings import NEW_MAPPING
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("exp_name", "tube_insertion", "Name of experiment corresponding to folder.")
-flags.DEFINE_integer("successes_needed", 25, "Number of successful demos to collect.")
+flags.DEFINE_string("exp_name", "tennis_ball_pick", "Name of experiment corresponding to folder.")
+flags.DEFINE_integer("successes_needed", 20, "Number of successful demos to collect.")
 flags.DEFINE_string("data_dir", "/home/ruiqiang/workspaces/HK_TACEXO_WANG/recorded_data/demo_data", "demo data dir")
 # flags.DEFINE_string("data_dir", "/home/qiangqiang/workspaces/data/2025-4-3/test_data", "demo data dir")
 flags.DEFINE_string("robot_urdf_path", "/home/ruiqiang/workspaces/HK_TACEXO_WANG/hil-serl/examples/urdf/denso_robot_with_ati_4.urdf", "robot urdf dir")
-flags.DEFINE_boolean("is_pick_task", False, "read exist data or not.")
+flags.DEFINE_boolean("is_arm_only", True, "read exist data or not.")
+flags.DEFINE_boolean("is_pick_task", True, "read exist data or not.")
 flags.DEFINE_boolean("is_pick_and_place", False, "read exist data or not.")
-flags.DEFINE_integer("enable_tactile", 1, "evaluate pick or place task.")
 
 # camera_keys = ["front_camera", "side_camera"]
 # classifier_keys = ["front_camera", "side_camera"]
@@ -52,16 +50,20 @@ def save_batch_to_pickle(batch_data, file_path):
         pkl.dump(batch_data, f)
         print(f"Saved batch of {len(batch_data)} transitions to {file_path}")
 
-def compute_reward(obs, classifier):
+def comupute_reward(obs, classifier):
 
     sigmoid = lambda x: 1 / (1 + jnp.exp(-x))
+    classifier_output = sigmoid(classifier(obs))
+
+    # 使用索引提取标量值
+    classifier_score = classifier_output[0]
     prob = sigmoid(classifier(obs)).item()
-    success = prob > 0.8
+    success = prob > 0.95
     reward = 1 if success else 0
-    # state = obs["state"]
-    # ee_pos = state[0, :3] if state.ndim > 1 else state[:3]
-    # if ee_pos[1] > -0.13 and ee_pos[2] < 0.14:
-    #     reward -= 0.05
+    state = obs["state"]
+    ee_pos = state[0, :3] if state.ndim > 1 else state[:3]
+    if ee_pos[1] > -0.13 and ee_pos[2] < 0.14:
+        reward -= 0.05
     return reward
 
 def main(_):
@@ -75,7 +77,16 @@ def main(_):
     pbar = tqdm(total=success_needed)
     trajectory = []
     returns = 0
-    action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(7,))
+    if not FLAGS.is_arm_only:
+        action_space = gym.spaces.Box(
+                np.ones((22,), dtype=np.float32) * -1,
+                np.ones((22,), dtype=np.float32),
+            )
+    else :
+        # low  = np.concatenate([np.ones(6, dtype=np.float32) * -1, [0]])
+        # high = np.ones(7, dtype=np.float32)
+        # action_space = gym.spaces.Box(low, high, dtype=np.float32)
+        action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(7,))
         
     if not os.path.exists("./demo_data"):
         os.makedirs("./demo_data")
@@ -87,43 +98,22 @@ def main(_):
     actions = np.zeros(action_space.sample().shape) 
     data_dir = FLAGS.data_dir
     # print("env.observation_space.sample().shape = ", env.observation_space.sample()["front_camera"].shape)
-    
-    print("config.classifier_keys = ", config.classifier_keys)
-    if FLAGS.exp_name == "twist_bottle_cap":
-        classifier = load_classifier_func(
-                key=jax.random.PRNGKey(0),
-                sample=env.observation_space.sample(),
-                image_keys=config.classifier_keys,
-                image_key_weights=config.classifier_key_weights,
-                checkpoint_path=os.path.abspath("classifier_ckpt_pick_bottle_twist/"),
-            )
-    elif FLAGS.exp_name == "tube_insertion":
-        classifier = load_classifier_func(
-                key=jax.random.PRNGKey(0),
-                sample=env.observation_space.sample(),
-                image_keys=config.classifier_keys,
-                image_key_weights=config.classifier_key_weights,
-                checkpoint_path=os.path.abspath("classifier_ckpt_tube_insertion/"),
-            )
-    elif FLAGS.exp_name == "tennis_ball_pick":
-        if FLAGS.is_pick_and_place:
-            classifier = load_classifier_func(
-                key=jax.random.PRNGKey(0),
-                sample=env.observation_space.sample(),
-                image_keys=config.classifier_keys,
-                image_key_weights=config.classifier_key_weights,
-                checkpoint_path=os.path.abspath("classifier_ckpt/"),
-            )
-        elif FLAGS.is_pick_task:
-            classifier = load_classifier_func(
-                key=jax.random.PRNGKey(0),
-                sample=env.observation_space.sample(),
-                image_keys=config.classifier_keys,
-                image_key_weights=config.classifier_key_weights,
-                checkpoint_path=os.path.abspath("classifier_ckpt_pick/"),
-            )
 
-    
+    classifier_pick = load_classifier_func(
+        key=jax.random.PRNGKey(0),
+        sample=env.observation_space.sample(),
+        image_keys=config.classifier_keys,
+        image_key_weights = config.classifier_key_weights,
+        checkpoint_path=os.path.abspath("classifier_ckpt_pick/"),
+    )
+
+    classifier_place = load_classifier_func(
+        key=jax.random.PRNGKey(0),
+        sample=env.observation_space.sample(),
+        image_keys=config.classifier_keys,
+        image_key_weights = config.classifier_key_weights,
+        checkpoint_path=os.path.abspath("classifier_ckpt/"),
+    )
 
     tcp_ori_list = []
     is_pick = True
@@ -138,31 +128,39 @@ def main(_):
         )
 
         # clip_marks_json = os.path.join(collect_data_path, 'clip_marks.json')
-        if FLAGS.exp_name == "twist_bottle_cap" or FLAGS.exp_name == "tube_insertion":
+        if FLAGS.is_pick_task:
+            print("clip_marks_pick")
+            is_pick = True
+            clip_marks_json = os.path.join(collect_data_path, 'clip_marks_pick.json')
+        else:
+            print("clip_marks_place")
+            is_pick = False
+            clip_marks_json = os.path.join(collect_data_path, 'clip_marks_place.json')
+        
+        if FLAGS.is_pick_and_place:
             print("clip_marks")
             is_pick = False
             clip_marks_json = os.path.join(collect_data_path, 'clip_marks.json')
-
-        elif FLAGS.exp_name == "tennis_ball_pick":
-            if FLAGS.is_pick_and_place:
-                print("clip_marks")
-                is_pick = False
-                clip_marks_json = os.path.join(collect_data_path, 'clip_marks.json')
-            elif FLAGS.is_pick_task:
-                print("clip_marks_pick")
-                is_pick = True
-                clip_marks_json = os.path.join(collect_data_path, 'clip_marks_pick.json')
-            else:
-                print("clip_marks_place")
-                is_pick = False
-                clip_marks_json = os.path.join(collect_data_path, 'clip_marks_place.json')
             
         with open(clip_marks_json, 'r') as f:
             clip_marks = json.load(f)
 
         
-        history_obs = read_utils.ObsHistoryBuffer(obs_horizon=3)
-        history_next_obs = read_utils.ObsHistoryBuffer(obs_horizon=3)
+        # history_obs = read_utils.ObsHistoryBuffer(obs_horizon=3)
+        # history_next_obs = read_utils.ObsHistoryBuffer(obs_horizon=3)
+        history_obs = read_utils.ObsHistoryBuffer(
+            obs_horizon=3,
+            image_keys=("front_camera", "tactile_data", "gaze_mask"),
+            proprio_key="state",
+        )
+        history_next_obs = read_utils.ObsHistoryBuffer(
+            obs_horizon=3,
+            image_keys=("front_camera", "tactile_data", "gaze_mask"),
+            proprio_key="state",
+        )  
+        
+        
+        
         for clip in clip_marks:
             start_frame = int(clip['start'].split('_')[-1])
             end_frame = int(clip['end'].split('_')[-1])
@@ -175,13 +173,14 @@ def main(_):
             for i in list(range(start_frame, end_frame+1)):
                 current_frame_path = os.path.join(collect_data_path, frame_dirs[i])
                 next_frame_path = os.path.join(collect_data_path, frame_dirs[i + 1]) if i < end_frame else current_frame_path
+                next_next_frame_path = os.path.join(collect_data_path, frame_dirs[i + 2]) if i < end_frame - 1 else next_frame_path
 
-                obs, is_record_success, grip_action = read_utils.get_frame_data(current_frame_path, FLAGS.robot_urdf_path, FLAGS.enable_tactile)
+                obs, is_record_success = read_utils.get_frame_data(current_frame_path, FLAGS.robot_urdf_path, next_frame_path, True)
                 if i == end_frame:
                     next_obs = obs
                 else:
                     next_frame_path = os.path.join(collect_data_path, frame_dirs[i + 1])
-                    next_obs, _, _ = read_utils.get_frame_data(next_frame_path, FLAGS.robot_urdf_path, FLAGS.enable_tactile)
+                    next_obs, _ = read_utils.get_frame_data(next_frame_path, FLAGS.robot_urdf_path, next_next_frame_path, True)
                 # print("obs state shape = ", obs["state"].shape)
                 # input("debug")
                 tcp_ori = obs["state"][3:7]  # 四元数部分
@@ -199,20 +198,16 @@ def main(_):
                 # print("stacked_next_obs['front_camera'].shape = ", stacked_obs['front_camera'].shape)
                 # print("obs keys:", obs.keys())
                 # if is_pick:
-                #     reward = compute_reward(obs, classifier_pick)
+                #     reward = comupute_reward(obs, classifier_pick)
                 # else:
-                reward = compute_reward(obs, classifier)
+                reward = comupute_reward(obs, classifier_pick)
 
 
                 done = reward or terminate
 
-                ACTION_SCALE = (0.005, 0.005, 0.05)
                 delta_pos = next_obs["state"][:3] - obs["state"][:3]
-                actions[:3] = delta_pos / ACTION_SCALE[0]
-                low  = np.array([-1, -1, -1, -1, -1, -1, -1], dtype=np.float32)
-                high = np.array([1, 1, 1, 1, 1, 1, 1], dtype=np.float32)
-                actions = np.clip(actions, low, high)
-                
+                actions[:3] = delta_pos
+
                 current_quat = obs["state"][3:7]  # wxyz
                 next_quat = next_obs["state"][3:7]
 
@@ -220,9 +215,8 @@ def main(_):
                 next_euler = R.from_quat([next_quat[1], next_quat[2], next_quat[3], next_quat[0]]).as_euler("xyz")
 
                 delta_euler = next_euler - current_euler
-                # actions[3:6] = delta_euler
-                actions[3:6] = 0.0
-                actions[6] = grip_action
+                actions[3:6] = delta_euler
+                actions[6] = next_obs["state"][7]
 
                 transition = copy.deepcopy(
                     dict(
@@ -246,7 +240,7 @@ def main(_):
                         transitions.append(copy.deepcopy(transition))
                     pbar.update(1)
                     trajectory = []
-                    # returns = 0
+                    returns = 0
                     terminate = False
                     # if len(transitions) >= batch_size:
                     #     save_batch_to_pickle(transitions, file_name)
@@ -259,17 +253,14 @@ def main(_):
     if not os.path.exists("./demo_data"):
         os.makedirs("./demo_data")
     uuid = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-    if FLAGS.exp_name == "twist_bottle_cap" or FLAGS.exp_name == "tube_insertion":
+    if FLAGS.is_pick_task:
+        file_name = f"./demo_data/{FLAGS.exp_name}_pick_{success_needed}_demos_{uuid}.pkl"
+    else:
+        file_name = f"./demo_data/{FLAGS.exp_name}_place_{success_needed}_demos_{uuid}.pkl"
+        
+    if FLAGS.is_pick_and_place:
+        
         file_name = f"./demo_data/{FLAGS.exp_name}_{success_needed}_demos_{uuid}.pkl"
-    elif FLAGS.exp_name == "tennis_ball_pick":
-        if FLAGS.is_pick_and_place:
-            file_name = f"./demo_data/{FLAGS.exp_name}_{success_needed}_demos_{uuid}.pkl"
-        elif FLAGS.is_pick_task:
-            file_name = f"./demo_data/{FLAGS.exp_name}_pick_{success_needed}_demos_{uuid}.pkl"
-        else:
-            file_name = f"./demo_data/{FLAGS.exp_name}_place_{success_needed}_demos_{uuid}.pkl"
-            
     with open(file_name, "wb") as f:
         pkl.dump(transitions, f)
         print(f"saved {success_needed} demos to {file_name}")

@@ -1,15 +1,19 @@
-examples/classifier_data*/*
-examples/classifier_ckpt*/*
-examples/classifier_ckpt_bottle_twist*/*
-examples/classifier_data copy/*
-examples/saved_clips*/*
-examples/demo_data/*
-examples/demo_data copy/*
-examples/test_data/*
-examples/experiments/tennis_ball_pick/2025*
-examples/experiments/twist_bottle_cap/2025*
-examples/experiments/tube_insertion/2025*
-examples/experiments/twist_bottle_cap/videos/*
-examples/experiments/tennis_ball_pick/__pycache__/*
-examples/experiments/twist_bottle_cap/__pycache__/*
-serl_robot_infra/denso_env/envs/__pycache__/*
+examples/classifier_data*/
+examples/classifier_ckpt*/
+examples/classifier_ckpt_bottle_twist*/
+examples/classifier_data copy/
+examples/saved_clips*/
+examples/demo_data/
+examples/demo_data copy/
+examples/test_data/
+examples/experiments/tennis_ball_pick/2025*/
+examples/experiments/twist_bottle_cap/2025*/
+examples/experiments/tube_insertion/2025*/
+examples/experiments/twist_bottle_cap/videos/
+examples/experiments/tennis_ball_pick/__pycache__/
+examples/experiments/twist_bottle_cap/__pycache__/
+examples/gaze_cls_data/
+examples/gaze_ckpt/
+examples/ckpt_pick_success/
+examples/recorded_data_robot_new/
+serl_robot_infra/denso_env/*/__pycache__/
